@@ -1,0 +1,23 @@
+name: WASM CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: mymindstorm/setup-emsdk@v16
+
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Make build script executable
+        working-directory: ./wasm
+        run: chmod +x ./build.sh
+      - name: Build
+        working-directory: ./wasm
+        run: EMCC_DEBUG=1 ./build.sh
