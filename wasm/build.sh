@@ -523,7 +523,10 @@ compile_file() {
     case "$src" in
     "$DCMTK_OFLOG_SCR_DIR"/*) extra_defs+=("-DDCMTK_INSIDE_LOG4CPLUS") ;;
     esac
+    echo "CC      $src"
     emcc -Werror -O3 "$@" "${extra_defs[@]}" -c "$src" "${common_flags[@]}" -o "$objname"
+  else
+    echo "CACHED  $src"
   fi
   obj_files+=("$objname")
 }

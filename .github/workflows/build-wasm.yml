@@ -11,7 +11,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Pin the SDK: newer emsdk (>= 5) fails to link the LTO-built C++ runtime
+      # with -fwasm-exceptions, producing undefined operator new/delete and
+      # __cxa_* symbols at link time. 4.0.23 is the verified working version.
       - uses: mymindstorm/setup-emsdk@v16
+        with:
+          version: 4.0.23
 
       - name: Checkout
         uses: actions/checkout@v6
@@ -20,4 +25,4 @@ jobs:
         run: chmod +x ./build.sh
       - name: Build
         working-directory: ./wasm
-        run: EMCC_DEBUG=1 ./build.sh
+        run: ./build.sh
