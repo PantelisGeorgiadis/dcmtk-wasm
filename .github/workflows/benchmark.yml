@@ -1,0 +1,65 @@
+name: Benchmark
+
+on:
+  pull_request:
+    branches: [ main ]
+  # Allow manual runs from the Actions tab for ad-hoc comparisons.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run benchmark
+        # Synthetic workloads, JSON output for the PR comment. The console
+        # tables are kept in the step log for quick inspection.
+        run: node benchmark/bench.js --json results.json
+
+      - name: Upload raw results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results.json
+          if-no-files-found: error
+
+      # Only comment on pull requests (workflow_dispatch has no PR context).
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          BODY_FILE=comment.md
+          node benchmark/report.js results.json > "$BODY_FILE"
+
+          MARKER='dcmtk-wasm-benchmark'
+          # Reuse a previously posted comment (matched by the hidden marker)
+          # so repeated pushes update one comment instead of spamming the PR.
+          EXISTING_ID=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq "[.[] | select(.body | contains(\"<!-- $MARKER -->\"))] | last | .id // empty")
+
+          if [ -n "$EXISTING_ID" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$EXISTING_ID" \
+              -f "body=$(cat "$BODY_FILE")" > /dev/null
+          else
+            gh pr comment "$PR_URL" --body-file "$BODY_FILE"
+          fi
+        continue-on-error: true
