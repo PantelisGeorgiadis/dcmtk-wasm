@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>dcmtk-wasm rendering example</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css"
+    />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+        width: 100%;
+      }
+
+      body {
+        min-height: 100vh;
+        background: #0d1117;
+        color: #c9d1d9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 32px 16px;
+      }
+
+      .page-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: #f0f6fc;
+        letter-spacing: -0.3px;
+        margin-bottom: 4px;
+      }
+
+      .page-subtitle {
+        font-size: 13px;
+        color: #8b949e;
+        margin-bottom: 20px;
+      }
+
+      .card {
+        width: 100%;
+        max-width: 960px;
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .drop-zone {
+        padding: 30px 20px;
+        text-align: center;
+        border-bottom: 1px solid #30363d;
+        transition:
+          background 0.15s,
+          box-shadow 0.15s;
+      }
+
+      .drop-zone.dragging {
+        background: rgba(88, 166, 255, 0.05);
+        box-shadow: inset 0 0 0 2px #58a6ff;
+      }
+
+      .drop-title {
+        font-size: 13px;
+        color: #8b949e;
+        margin-bottom: 14px;
+      }
+
+      .drop-title + .drop-title {
+        margin-top: -8px;
+      }
+
+      .btn-row {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 16px;
+        border-radius: 6px;
+        border: 1px solid;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background 0.12s,
+          opacity 0.12s;
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        color: #58a6ff;
+        border-color: rgba(56, 139, 253, 0.4);
+        background: transparent;
+      }
+
+      .btn-primary:not(:disabled):hover {
+        background: rgba(88, 166, 255, 0.1);
+      }
+
+      .status-bar {
+        padding: 8px 14px;
+        border-bottom: 1px solid #30363d;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 40px;
+      }
+
+      .status-text {
+        flex: 1;
+        font-size: 12px;
+        color: #8b949e;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .status-text.error {
+        color: #f85149;
+      }
+
+      .renderer-badge {
+        color: #3fb950;
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        background: rgba(63, 185, 80, 0.06);
+        border-radius: 20px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 500;
+        flex-shrink: 0;
+      }
+
+      .canvas-wrap {
+        background: #0d1117;
+        padding: 16px;
+        text-align: center;
+        min-height: 260px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      canvas {
+        max-width: 100%;
+        max-height: 70vh;
+        display: block;
+        border-radius: 4px;
+      }
+
+      .metadata-toggle {
+        padding: 8px 14px;
+        border-bottom: 1px solid #30363d;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .metadata-toggle .btn {
+        color: #8b949e;
+        border-color: #30363d;
+        background: transparent;
+      }
+
+      .metadata-toggle .btn:not(:disabled):hover {
+        background: rgba(139, 148, 158, 0.1);
+      }
+
+      .metadata-panel {
+        display: none;
+        padding: 12px 14px;
+        border-bottom: 1px solid #30363d;
+        max-height: 320px;
+        overflow: auto;
+      }
+
+      .metadata-panel.open {
+        display: block;
+      }
+
+      .metadata-panel pre {
+        margin: 0;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #c9d1d9;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .footer-note {
+        margin-top: 14px;
+        font-size: 12px;
+        color: #484f58;
+        text-align: center;
+      }
+
+      @media (max-width: 640px) {
+        .btn-row {
+          flex-direction: column;
+        }
+
+        .btn {
+          justify-content: center;
+        }
+      }
+    </style>
+    <style>
+      .github-fork-ribbon:before {
+        background-color: #58a6ff;
+      }
+    </style>
+  </head>
+  <body>
+    <a
+      class="github-fork-ribbon left-top"
+      href="https://github.com/PantelisGeorgiadis/dcmtk-wasm"
+      data-ribbon="Visit me on GitHub"
+      title="Visit me on GitHub"
+      target="_blank"
+      >Visit me on GitHub</a
+    >
+    <h1 class="page-title">dcmtk-wasm rendering example</h1>
+    <p class="page-subtitle">
+      Parse a DICOM Part 10 file and render a frame in the browser with WebAssembly.
+    </p>
+    <div id="app">
+      <div
+        class="card"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
+        <div class="drop-zone" :class="{ dragging: isDragging }">
+          <p class="drop-title">Open or drag and drop a DICOM Part 10 file to render it!</p>
+          <p class="drop-title">Use the mouse wheel to scroll through frames.</p>
+          <div class="btn-row">
+            <button class="btn btn-primary" :disabled="isRendering" @click="openFile">
+              Open DICOM file
+            </button>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <span class="status-text" :class="{ error: hasError }">{{ statusText }}</span>
+          <span class="renderer-badge">{{ renderer }}</span>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas ref="canvasRef"></canvas>
+        </div>
+
+        <div class="metadata-toggle">
+          <span class="status-text">Dataset metadata</span>
+          <button class="btn" :disabled="!hasMetadata" @click="toggleMetadata">
+            {{ showMetadata ? 'Hide' : 'Show' }}
+          </button>
+        </div>
+
+        <div class="metadata-panel" ref="metadataPanelRef" :class="{ open: showMetadata }">
+          <pre>{{ metadataText }}</pre>
+        </div>
+      </div>
+      <p class="footer-note">Nothing is uploaded anywhere.</p>
+    </div>
+
+    <script
+      type="text/javascript"
+      src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"
+    ></script>
+    <script type="text/javascript" src="dcmtk-wasm.min.js"></script>
+    <script>
+      const { createApp, ref, onMounted, nextTick } = Vue;
+      const { Dcmtk, DcmtkModule } = window.dcmtkWasm;
+
+      function isWebGLAvailable() {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        return gl instanceof WebGLRenderingContext;
+      }
+
+      // Recursively sorts the keys of the metadata JSON so the attributes are
+      // listed in ascending DICOM tag order (array items keep their order).
+      function sortMetadata(value) {
+        if (Array.isArray(value)) {
+          return value.map(sortMetadata);
+        }
+        if (value && typeof value === 'object') {
+          const sorted = {};
+          Object.keys(value)
+            .sort()
+            .forEach((key) => {
+              sorted[key] = sortMetadata(value[key]);
+            });
+          return sorted;
+        }
+        return value;
+      }
+
+      createApp({
+        setup() {
+          const canvasRef = ref(null);
+          const metadataPanelRef = ref(null);
+          const isDragging = ref(false);
+          const isRendering = ref(false);
+          const hasError = ref(false);
+          const statusText = ref('Initializing decoder...');
+          const renderer = ref('Canvas');
+          const hasMetadata = ref(false);
+          const showMetadata = ref(false);
+          const metadataText = ref('');
+
+          let dcmtk;
+          let frame = 0;
+          let totalFrames = 1;
+
+          function onDragOver(event) {
+            isDragging.value = true;
+            if (event.dataTransfer) {
+              event.dataTransfer.dropEffect = 'copy';
+            }
+          }
+
+          function onDragLeave() {
+            isDragging.value = false;
+          }
+
+          function detectRenderer() {
+            return isWebGLAvailable() ? 'WebGL' : 'Canvas';
+          }
+
+          function clearCurrentImage() {
+            if (dcmtk) {
+              dcmtk.release();
+              dcmtk = undefined;
+            }
+            frame = 0;
+            totalFrames = 1;
+            hasMetadata.value = false;
+            metadataText.value = '';
+
+            const canvasElement = canvasRef.value;
+            if (!canvasElement) {
+              return;
+            }
+            canvasElement.width = 0;
+            canvasElement.height = 0;
+          }
+
+          function drawCurrentFrame() {
+            const canvasElement = canvasRef.value;
+            if (!canvasElement || !dcmtk) {
+              return;
+            }
+
+            hasError.value = false;
+
+            let renderedFrame;
+            const t0 = performance.now();
+            try {
+              renderedFrame = dcmtk.getRenderedFrame(frame);
+            } catch (err) {
+              hasError.value = true;
+              statusText.value = 'Error: ' + err.message;
+              if (hasMetadata.value) {
+                showMetadata.value = true;
+              }
+              return;
+            }
+            const t1 = performance.now();
+
+            // getRenderedFrame returns a full BMP file in pixelData.
+            const blob = new Blob([renderedFrame.pixelData], { type: 'image/bmp' });
+            const url = URL.createObjectURL(blob);
+            const image = new Image();
+            image.onload = () => {
+              canvasElement.width = image.width;
+              canvasElement.height = image.height;
+              const ctx = canvasElement.getContext('2d');
+              ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+              ctx.drawImage(image, 0, 0);
+              URL.revokeObjectURL(url);
+
+              const t2 = performance.now();
+              statusText.value =
+                'Frame ' +
+                (frame + 1) +
+                '/' +
+                totalFrames +
+                ' | ' +
+                renderedFrame.columns +
+                'x' +
+                renderedFrame.rows;
+            };
+            image.onerror = () => {
+              URL.revokeObjectURL(url);
+              hasError.value = true;
+              statusText.value = 'Error rendering frame';
+            };
+            image.src = url;
+          }
+
+          function bindCanvasInteractions() {
+            const canvasElement = canvasRef.value;
+            if (!canvasElement) {
+              return;
+            }
+
+            canvasElement.onwheel = (event) => {
+              if (!dcmtk || totalFrames < 2) {
+                return;
+              }
+              event.preventDefault();
+              const next = event.deltaY > 0 ? 1 : -1;
+              const candidate = frame + next;
+              if (candidate > totalFrames - 1 || candidate < 0) {
+                return;
+              }
+              frame = candidate;
+              drawCurrentFrame();
+            };
+          }
+
+          function renderArrayBuffer(arrayBuffer) {
+            const t0 = performance.now();
+            dcmtk = new Dcmtk();
+            dcmtk.parseDataset(arrayBuffer);
+            frame = 0;
+            renderer.value = detectRenderer();
+            const t1 = performance.now();
+
+            const metadata = dcmtk.getMetadata();
+            hasMetadata.value = true;
+            metadataText.value = JSON.stringify(sortMetadata(metadata), null, 2);
+            // Start the metadata list at the top for every new file.
+            nextTick(() => {
+              if (metadataPanelRef.value) {
+                metadataPanelRef.value.scrollTop = 0;
+              }
+            });
+
+            const numberOfFrames = metadata['00280008'];
+            totalFrames = numberOfFrames && numberOfFrames.Value ? numberOfFrames.Value[0] : 1;
+
+            console.log('Parsing time: ' + (t1 - t0) + ' ms');
+            console.log('Number of frames: ' + totalFrames);
+
+            drawCurrentFrame();
+          }
+
+          function renderFile(file) {
+            if (!file) {
+              return;
+            }
+
+            const reader = new FileReader();
+            isRendering.value = true;
+            hasError.value = false;
+            statusText.value = 'Loading file...';
+
+            reader.onload = () => {
+              try {
+                clearCurrentImage();
+                renderArrayBuffer(reader.result);
+              } catch (err) {
+                clearCurrentImage();
+                hasError.value = true;
+                statusText.value = 'Error: ' + err.message;
+                console.error(err);
+              } finally {
+                isRendering.value = false;
+              }
+            };
+
+            reader.onerror = () => {
+              clearCurrentImage();
+              isRendering.value = false;
+              hasError.value = true;
+              statusText.value = 'Error reading file';
+            };
+
+            reader.readAsArrayBuffer(file);
+          }
+
+          function onDrop(event) {
+            isDragging.value = false;
+            const file =
+              event.dataTransfer && event.dataTransfer.files
+                ? event.dataTransfer.files[0]
+                : undefined;
+            renderFile(file);
+          }
+
+          function openFile() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.onchange = (event) => {
+              const file = event.target.files[0];
+              renderFile(file);
+            };
+            input.click();
+          }
+
+          function toggleMetadata() {
+            showMetadata.value = !showMetadata.value;
+            if (showMetadata.value) {
+              // Re-opening the panel starts the list at the top.
+              nextTick(() => {
+                if (metadataPanelRef.value) {
+                  metadataPanelRef.value.scrollTop = 0;
+                }
+              });
+            }
+          }
+
+          onMounted(async () => {
+            window.addEventListener('dragover', (event) => {
+              event.preventDefault();
+            });
+            window.addEventListener('drop', (event) => {
+              event.preventDefault();
+            });
+
+            await DcmtkModule.initializeAsync({ logMessages: true });
+
+            renderer.value = detectRenderer();
+            statusText.value = '';
+            bindCanvasInteractions();
+          });
+
+          return {
+            canvasRef,
+            metadataPanelRef,
+            isDragging,
+            isRendering,
+            hasError,
+            statusText,
+            renderer,
+            hasMetadata,
+            showMetadata,
+            metadataText,
+            onDragOver,
+            onDragLeave,
+            onDrop,
+            openFile,
+            toggleMetadata,
+          };
+        },
+      }).mount('#app');
+    </script>
+  </body>
+</html>
