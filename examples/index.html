@@ -300,22 +300,33 @@
         return gl instanceof WebGLRenderingContext;
       }
 
-      // Recursively sorts the keys of the metadata JSON so the attributes are
-      // listed in ascending DICOM tag order (array items keep their order).
-      function sortMetadata(value) {
+      // Serialises the metadata JSON with keys in ascending DICOM tag order
+      // (array items keep their order). The string is built directly from the
+      // sorted keys because JS objects always enumerate integer-like keys
+      // (e.g. "20010010") first in numeric order, which would undo a sort
+      // based on object insertion order.
+      function stringifyMetadata(value, depth = 0) {
+        const pad = '  '.repeat(depth);
+        const padInner = '  '.repeat(depth + 1);
         if (Array.isArray(value)) {
-          return value.map(sortMetadata);
+          if (value.length === 0) {
+            return '[]';
+          }
+          const items = value.map((item) => padInner + stringifyMetadata(item, depth + 1));
+          return `[\n${items.join(',\n')}\n${pad}]`;
         }
         if (value && typeof value === 'object') {
-          const sorted = {};
-          Object.keys(value)
-            .sort()
-            .forEach((key) => {
-              sorted[key] = sortMetadata(value[key]);
-            });
-          return sorted;
+          const keys = Object.keys(value).sort();
+          if (keys.length === 0) {
+            return '{}';
+          }
+          const entries = keys.map(
+            (key) =>
+              `${padInner}${JSON.stringify(key)}: ${stringifyMetadata(value[key], depth + 1)}`
+          );
+          return `{\n${entries.join(',\n')}\n${pad}}`;
         }
-        return value;
+        return JSON.stringify(value);
       }
 
       createApp({
@@ -452,7 +463,7 @@
 
             const metadata = dcmtk.getMetadata();
             hasMetadata.value = true;
-            metadataText.value = JSON.stringify(sortMetadata(metadata), null, 2);
+            metadataText.value = stringifyMetadata(metadata);
             // Start the metadata list at the top for every new file.
             nextTick(() => {
               if (metadataPanelRef.value) {
