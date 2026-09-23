@@ -1,7 +1,5 @@
 #include "DcmtkContext.h"
 
-#include <cstring>
-
 extern "C" {
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -58,15 +56,6 @@ EMSCRIPTEN_KEEPALIVE uint8_t *GetMetadataContextMetadataBuffer(
 EMSCRIPTEN_KEEPALIVE size_t
 GetMetadataContextMetadataBufferSize(MetadataContext const *ctx) {
   return ctx->MetadataBuffer.GetSize();
-}
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-EMSCRIPTEN_KEEPALIVE void SetMetadataContextMetadataBuffer(MetadataContext *ctx,
-                                                           uint8_t const *data,
-                                                           size_t const size) {
-  ctx->MetadataBuffer.Reset(size);
-  memcpy(ctx->MetadataBuffer.GetData(), data, size);
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -223,15 +212,6 @@ EMSCRIPTEN_KEEPALIVE uint8_t *GetFrameContextPixelDataBuffer(
 EMSCRIPTEN_KEEPALIVE size_t
 GetFrameContextPixelDataBufferSize(FrameContext const *ctx) {
   return ctx->PixelDataBuffer.GetSize();
-}
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-EMSCRIPTEN_KEEPALIVE void SetFrameContextPixelDataBuffer(FrameContext *ctx,
-                                                         uint8_t const *data,
-                                                         size_t const size) {
-  ctx->PixelDataBuffer.Reset(size);
-  memcpy(ctx->PixelDataBuffer.GetData(), data, size);
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

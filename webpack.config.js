@@ -23,7 +23,7 @@ function getBanner() {
   return (
     `/*! ${pkg.name} - ${pkg.version} - ` +
     `${getCurrentDate()} ` +
-    `| (c) 2023 ${pkg.author} | ${pkg.homepage} */`
+    `| (c) 2026 ${pkg.author} | ${pkg.homepage} */`
   );
 }
 
@@ -31,7 +31,7 @@ module.exports = {
   mode: 'production',
   context,
   entry: {
-    dcmjsImaging: './index.js',
+    dcmtkWasm: './index.js',
   },
   target: 'web',
   output: {

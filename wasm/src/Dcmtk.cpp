@@ -11,6 +11,8 @@
 #include <dcmtk/dcmimgle/dcmimage.h>
 #include <emscripten.h>
 
+#include <algorithm>
+#include <memory>
 #include <sstream>
 #include <vector>
 
@@ -43,6 +45,153 @@ static void ThrowIfUnsupportedTransferSyntax(DcmDataset const *dataset,
     ThrowDcmtkException(string(context) + "::Unsupported transfer syntax: " +
                         string(xfer.getXferName()));
   }
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// Returns the Float Pixel Data (7FE0,0008) or Double Float Pixel Data
+// (7FE0,0009) element of the dataset, or nullptr when neither is present.
+// These non-standard pixel data carriers are used by some parametric map
+// (e.g. T1/T2 map) datasets instead of the standard Pixel Data (7FE0,0010).
+static DcmElement *FindFloatPixelDataElement(DcmDataset *dataset) {
+  DcmElement *element = nullptr;
+  if (dataset->findAndGetElement(DCM_FloatPixelData, element).good() &&
+      element != nullptr) {
+    return element;
+  }
+  element = nullptr;
+  if (dataset->findAndGetElement(DCM_DoubleFloatPixelData, element).good() &&
+      element != nullptr) {
+    return element;
+  }
+
+  return nullptr;
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// Builds a temporary dataset containing the requested frame of the given float
+// pixel data element as standard 16-bit MONOCHROME2 Pixel Data. The float
+// values of the frame are scaled linearly to the full 16-bit range using the
+// frame's own minimum and maximum, which gives a reasonable per-frame display
+// window for parametric maps. The temporary dataset carries the pixel
+// description attributes from the original dataset so that DicomImage can be
+// created from it. The caller owns the returned dataset.
+static DcmDataset *CreateTempDatasetFromFloatFrame(DcmDataset *dataset,
+                                                   DcmElement *pixelElement,
+                                                   size_t const frameIndex) {
+  // Read the pixel geometry from the original dataset.
+  Uint16 columns = 0;
+  Uint16 rows = 0;
+  dataset->findAndGetUint16(DCM_Columns, columns);
+  dataset->findAndGetUint16(DCM_Rows, rows);
+  if (columns == 0 || rows == 0) {
+    ThrowDcmtkException(
+        "GetRenderedFrame::FloatPixelData::Missing Columns or Rows");
+  }
+
+  // Determine the per-sample size from the element's VR: OF (32-bit float) or
+  // OD (64-bit double).
+  auto const vr = pixelElement->getVR();
+  size_t sampleSize = 0;
+  if (vr == EVR_OF) {
+    sampleSize = sizeof(Float32);
+  } else if (vr == EVR_OD) {
+    sampleSize = sizeof(Float64);
+  } else {
+    ThrowDcmtkException(
+        "GetRenderedFrame::FloatPixelData::Unexpected value representation");
+  }
+
+  // Validate that the element holds enough samples for the requested frame.
+  auto const framePixels = static_cast<size_t>(columns) * rows;
+  auto const totalSamples =
+      static_cast<size_t>(pixelElement->getLength()) / sampleSize;
+  auto const frameStart = frameIndex * framePixels;
+  if (frameStart + framePixels > totalSamples) {
+    ThrowDcmtkException(
+        "GetRenderedFrame::FloatPixelData::Pixel data too small for frame " +
+        to_string(frameIndex));
+  }
+
+  // Copy the frame's samples into a local float buffer, converting doubles to
+  // floats on the way when needed.
+  vector<float> samples(framePixels);
+  if (vr == EVR_OF) {
+    Float32 *floatValues = nullptr;
+    if (pixelElement->getFloat32Array(floatValues).bad() ||
+        floatValues == nullptr) {
+      ThrowDcmtkException(
+          "GetRenderedFrame::FloatPixelData::getFloat32Array::Value not found");
+    }
+    auto const *source = reinterpret_cast<float const *>(floatValues);
+    copy(source + frameStart, source + frameStart + framePixels,
+         samples.begin());
+  } else {
+    Float64 *doubleValues = nullptr;
+    if (pixelElement->getFloat64Array(doubleValues).bad() ||
+        doubleValues == nullptr) {
+      ThrowDcmtkException(
+          "GetRenderedFrame::FloatPixelData::"
+          "getFloat64Array::Value not found");
+    }
+    auto const *source = reinterpret_cast<double const *>(doubleValues);
+    transform(source + frameStart, source + frameStart + framePixels,
+              samples.begin(),
+              [](double const value) { return static_cast<float>(value); });
+  }
+
+  // Compute the frame's min/max, ignoring NaN values, and scale the samples
+  // linearly to the full 16-bit range. A constant frame maps to mid-gray.
+  float minValue = 0;
+  float maxValue = 0;
+  bool haveValue = false;
+  for (auto const value : samples) {
+    if (value != value) {  // NaN
+      continue;
+    }
+    if (!haveValue || value < minValue) {
+      minValue = value;
+    }
+    if (!haveValue || value > maxValue) {
+      maxValue = value;
+    }
+    haveValue = true;
+  }
+  if (!haveValue) {
+    ThrowDcmtkException(
+        "GetRenderedFrame::FloatPixelData::Frame has no valid values");
+  }
+
+  vector<Uint16> pixels(framePixels);
+  auto const range = static_cast<double>(maxValue) - minValue;
+  for (size_t i = 0; i < framePixels; ++i) {
+    auto const value = samples[i];
+    if (value != value) {  // NaN renders as black
+      pixels[i] = 0;
+    } else if (range == 0) {
+      pixels[i] = 32768;
+    } else {
+      pixels[i] = static_cast<Uint16>((static_cast<double>(value) - minValue) /
+                                      range * 65535.0);
+    }
+  }
+
+  // Build the temporary dataset with the pixel description attributes and the
+  // scaled 16-bit pixel data.
+  auto *tempDataset = new DcmDataset();
+  tempDataset->putAndInsertUint16(DCM_Columns, columns);
+  tempDataset->putAndInsertUint16(DCM_Rows, rows);
+  tempDataset->putAndInsertUint16(DCM_SamplesPerPixel, 1);
+  tempDataset->putAndInsertString(DCM_PhotometricInterpretation, "MONOCHROME2");
+  tempDataset->putAndInsertUint16(DCM_BitsAllocated, 16);
+  tempDataset->putAndInsertUint16(DCM_BitsStored, 16);
+  tempDataset->putAndInsertUint16(DCM_HighBit, 15);
+  tempDataset->putAndInsertUint16(DCM_PixelRepresentation, 0);
+  tempDataset->putAndInsertUint16Array(DCM_PixelData, pixels.data(),
+                                       static_cast<unsigned long>(framePixels));
+
+  return tempDataset;
 }
 
 extern "C" {
@@ -93,20 +242,26 @@ EMSCRIPTEN_KEEPALIVE void GetMetadataAsJson(DcmtkContext const *ctx,
     ThrowDcmtkException("GetMetadata::Dataset is null");
   }
 
-  // Temporarily detach PixelData so it never appears in the metadata JSON.
-  // The RAII guard re-inserts the element on scope exit (including when an
-  // exception is thrown), so the dataset is left unchanged. When the dataset
-  // has no PixelData, remove() returns nullptr and the guard is a no-op.
+  // Temporarily detach the pixel data elements (standard PixelData as well as
+  // Float and Double Float Pixel Data) so they never appear in the metadata
+  // JSON. The RAII guard re-inserts the elements on scope exit (including when
+  // an exception is thrown), so the dataset is left unchanged. For absent
+  // tags, remove() returns nullptr and the guard skips the re-insertion.
   struct PixelDataOmissionGuard {
     DcmDataset *Dataset;
-    DcmElement *Element;
+    DcmElement *Elements[3];
     ~PixelDataOmissionGuard() {
-      if (Element != nullptr) {
-        Dataset->insert(Element, true);
+      for (auto &element : Elements) {
+        if (element != nullptr) {
+          Dataset->insert(element, true);
+        }
       }
     }
-  } const pixelDataOmissionGuard{ctx->Dataset,
-                                 ctx->Dataset->remove(DCM_PixelData)};
+  } const pixelDataOmissionGuard{
+      ctx->Dataset,
+      {ctx->Dataset->remove(DCM_PixelData),
+       ctx->Dataset->remove(DCM_FloatPixelData),
+       ctx->Dataset->remove(DCM_DoubleFloatPixelData)}};
 
   // Build a compact JSON writer with sensible defaults.
   ostringstream jsonOutputStream;
@@ -142,15 +297,66 @@ EMSCRIPTEN_KEEPALIVE void GetRenderedFrameAsBmp(DcmtkContext const *ctx,
   if (ctx->Dataset == nullptr) {
     ThrowDcmtkException("GetRenderedFrame::Dataset is null");
   }
-  // Rendering requires pixel data to be present.
-  if (!ctx->Dataset->tagExistsWithValue(DCM_PixelData)) {
+
+  // Rendering requires pixel data to be present. Some parametric map datasets
+  // carry their pixels in Float (7FE0,0008) or Double Float Pixel Data
+  // (7FE0,0009) instead, which DicomImage cannot read directly.
+  auto const hasStandardPixelData =
+      ctx->Dataset->tagExistsWithValue(DCM_PixelData);
+  DcmElement *floatPixelDataElement =
+      hasStandardPixelData ? nullptr : FindFloatPixelDataElement(ctx->Dataset);
+  if (!hasStandardPixelData && floatPixelDataElement == nullptr) {
     ThrowDcmtkException("GetRenderedFrame::Dataset does not contain PixelData");
   }
-  // Reject transfer syntaxes that cannot be decoded to uncompressed pixels.
-  ThrowIfUnsupportedTransferSyntax(ctx->Dataset, "GetRenderedFrame");
 
-  // Build a high-level image from the dataset and its original transfer syntax.
-  DicomImage image(ctx->Dataset, ctx->Dataset->getOriginalXfer());
+  // Reject transfer syntaxes that cannot be decoded to uncompressed pixels.
+  // Float pixel data is always uncompressed, so this only applies to standard
+  // Pixel Data.
+  if (hasStandardPixelData) {
+    ThrowIfUnsupportedTransferSyntax(ctx->Dataset, "GetRenderedFrame");
+  }
+
+  // Determine the number of frames; default to 1 when the tag is absent or
+  // non-positive (single-frame datasets often omit it).
+  long int numberOfFrames = 1;
+  if (ctx->Dataset->findAndGetLongInt(DCM_NumberOfFrames, numberOfFrames)
+          .bad() ||
+      numberOfFrames <= 0) {
+    numberOfFrames = 1;
+  }
+
+  // Validate the requested frame index against the dataset's frame count.
+  // (The image itself is created with a single-frame window below, so its own
+  // frame count is not usable for validation.)
+  auto const frameIndex = GetFrameContextFrameIndex(frameCtx);
+  if (frameIndex >= static_cast<size_t>(numberOfFrames)) {
+    ThrowDcmtkException(
+        "GetRenderedFrame::FrameIndex out of range: " + to_string(frameIndex) +
+        " >= NumberOfFrames: " + to_string(numberOfFrames));
+  }
+
+  // Build a high-level image from the dataset and its original transfer
+  // syntax, restricted to the requested frame. The partial-access flag makes
+  // DCMTK decode only that one frame instead of decompressing every frame of
+  // (possibly compressed) pixel data into memory up front, which would fail
+  // for large multi-frame datasets. For float pixel data, the requested frame
+  // is first scaled into a temporary single-frame 16-bit dataset that
+  // DicomImage can read.
+  unique_ptr<DcmDataset> tempDataset;
+  DcmObject *imageSource = ctx->Dataset;
+  auto imageXfer = ctx->Dataset->getOriginalXfer();
+  auto imageFlags = CIF_UsePartialAccessToPixelData;
+  auto imageStartFrame = static_cast<unsigned long>(frameIndex);
+  if (floatPixelDataElement != nullptr) {
+    tempDataset.reset(CreateTempDatasetFromFloatFrame(
+        ctx->Dataset, floatPixelDataElement, frameIndex));
+    imageSource = tempDataset.get();
+    imageXfer = EXS_LittleEndianExplicit;
+    imageFlags = 0;
+    // The temporary dataset already contains only the requested frame.
+    imageStartFrame = 0;
+  }
+  DicomImage image(imageSource, imageXfer, imageFlags, imageStartFrame, 1UL);
   if (image.getStatus() != EIS_Normal) {
     ThrowDcmtkException("GetRenderedFrame::DicomImage::" +
                         string(DicomImage::getString(image.getStatus())));
@@ -161,15 +367,10 @@ EMSCRIPTEN_KEEPALIVE void GetRenderedFrameAsBmp(DcmtkContext const *ctx,
   if (image.isMonochrome()) {
     image.setMinMaxWindow();
   }
-  // Validate the requested frame index against the image's frame count.
-  auto const frameIndex = GetFrameContextFrameIndex(frameCtx);
-  if (frameIndex >= image.getFrameCount()) {
-    ThrowDcmtkException("GetRenderedFrame::FrameIndex out of range: " +
-                        to_string(frameIndex));
-  }
 
-  // Render the frame to a BMP byte buffer.
-  auto const bmp = WriteBmp(image, frameIndex);
+  // Render the frame to a BMP byte buffer. Frame indices are relative to the
+  // image's start frame, which is the requested frame, so render frame 0.
+  auto const bmp = WriteBmp(image, 0);
 
   // Record the rendered image's properties: 8-bit, 3-sample RGB, interleaved.
   SetFrameContextColumns(frameCtx, image.getWidth());
@@ -197,11 +398,13 @@ EMSCRIPTEN_KEEPALIVE void GetUncompressedFrame(DcmtkContext const *ctx,
   if (ctx->Dataset == nullptr) {
     ThrowDcmtkException("GetUncompressedFrame::Dataset is null");
   }
+
   // Decoding requires pixel data to be present.
   if (!ctx->Dataset->tagExistsWithValue(DCM_PixelData)) {
     ThrowDcmtkException(
         "GetUncompressedFrame::Dataset does not contain PixelData");
   }
+
   // Reject transfer syntaxes that cannot be decoded to uncompressed pixels.
   ThrowIfUnsupportedTransferSyntax(ctx->Dataset, "GetUncompressedFrame");
 
@@ -213,6 +416,7 @@ EMSCRIPTEN_KEEPALIVE void GetUncompressedFrame(DcmtkContext const *ctx,
       numberOfFrames <= 0) {
     numberOfFrames = 1;
   }
+
   // Validate the requested frame index against the frame count.
   auto const frame = GetFrameContextFrameIndex(frameCtx);
   if (frame >= static_cast<size_t>(numberOfFrames)) {

@@ -6,7 +6,53 @@ const log = require('./log');
  * @constant {string}
  */
 const wasmFilename = 'dcmtk-wasm.wasm';
-Object.freeze(wasmFilename);
+
+/**
+ * The wasm-exported functions used by this package. Only these are bound onto
+ * the wasm API, so Emscripten runtime internals (malloc, free, __trap,
+ * emscripten_stack_*, __cxa_*, ...) stay out of the public surface. The names
+ * must match the EMSCRIPTEN_KEEPALIVE functions in wasm/src.
+ * @constant {string[]}
+ */
+const wasmExportedFunctions = Object.freeze([
+  // DcmtkContext
+  'CreateDcmtkContext',
+  'ReleaseDcmtkContext',
+  'GetEncodedBuffer',
+  'SetEncodedBufferSize',
+  'ParseDataset',
+  // MetadataContext
+  'CreateMetadataContext',
+  'ReleaseMetadataContext',
+  'GetMetadataContextMetadataBuffer',
+  'GetMetadataContextMetadataBufferSize',
+  'GetMetadataAsJson',
+  // FrameContext
+  'CreateFrameContext',
+  'ReleaseFrameContext',
+  'GetFrameContextFrameIndex',
+  'SetFrameContextFrameIndex',
+  'GetFrameContextColumns',
+  'GetFrameContextRows',
+  'GetFrameContextBitsAllocated',
+  'GetFrameContextBitsStored',
+  'GetFrameContextSamplesPerPixel',
+  'GetFrameContextPixelRepresentation',
+  'GetFrameContextPlanarConfiguration',
+  'GetFrameContextPhotometricInterpretation',
+  'GetFrameContextPixelDataBuffer',
+  'GetFrameContextPixelDataBufferSize',
+  'GetRenderedFrameAsBmp',
+  'GetUncompressedFrame',
+]);
+
+/**
+ * Incremented on every successful initialization, so Dcmtk instances can detect
+ * that they were created against a previous WebAssembly instance (their native
+ * context pointers then point into a detached heap).
+ * @type {number}
+ */
+let generation = 0;
 
 //#region DcmtkModule
 /**
@@ -32,15 +78,39 @@ class DcmtkModule {
     this.textDecoder = new TextDecoder();
 
     const { instance, module } = await this._createWebAssemblyInstance();
-    const exports = WebAssembly.Module.exports(module);
-    const exportedFunctions = exports.filter((e) => e.kind === 'function');
 
-    exportedFunctions.forEach((key) => {
-      const wasmKey = `wasm${key.name}`;
-      this.wasmApi[wasmKey] = instance.exports[key.name];
+    // Only bind the functions this package uses; Emscripten runtime internals
+    // (malloc, free, __trap, emscripten_stack_*, __cxa_*, ...) are skipped.
+    wasmExportedFunctions.forEach((name) => {
+      this.wasmApi[`wasm${name}`] = instance.exports[name];
     });
 
     this.wasmApi.wasmModule = module;
+
+    // Bump the generation so Dcmtk instances created against a previous
+    // instance detect that their native context pointers are stale.
+    this.generation = ++generation;
+  }
+
+  /**
+   * Checks that the given Dcmtk context still belongs to the current WebAssembly
+   * instance. Called by Dcmtk before every wasm invocation.
+   * @method
+   * @static
+   * @private
+   * @param {number} generation - The generation a Dcmtk instance was created in.
+   * @throws {Error} If the module has been re-initialized since then, which would
+   * make the instance's native context pointers dangle in a detached heap.
+   */
+  static _throwIfGenerationIsStale(generation) {
+    this._throwIfDcmtkModuleIsNotInitialized();
+
+    if (this.generation !== generation) {
+      throw new Error(
+        'Dcmtk instance is stale: the Dcmtk module was re-initialized after this ' +
+          'instance was created. Create a new Dcmtk instance for the current module.'
+      );
+    }
   }
 
   /**

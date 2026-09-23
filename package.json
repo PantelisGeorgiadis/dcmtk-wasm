@@ -4,14 +4,17 @@
   "description": "DICOM dataset parsing and image rendering module based on WebAssembly and DCMTK",
   "main": "build/dcmtk-wasm.min.js",
   "module": "build/dcmtk-wasm.min.js",
+  "types": "index.d.ts",
   "scripts": {
     "build": "npm run version && npm run lint && npm run test && npm run coverage && npm run webpack",
+    "build:ci": "npm run version && npm run lint:ci && npm run test && npm run coverage && npm run webpack",
     "clean": "npm run clean:build && npm run clean:coverage",
     "clean:build": "shx rm -rf build",
     "clean:coverage": "shx rm -rf coverage",
     "coverage": "c8 --check-coverage --lines 80 --functions 80 --branches 80 --statements 80 --clean --reporter=text --reporter=html --include=src/*.js --exclude=src/index.js --exclude=src/version.js --exclude=src/log.js mocha test/**/*.test.js",
     "format:cpp": "clang-format -style=file:.clang-format -i \"--glob=wasm/src/**/*.@(cpp|h)\"",
-    "lint": "eslint -c .eslintrc.json --fix src && prettier --tab-width 2 --single-quote true --print-width 100 --use-tabs false --trailing-comma es5 --write src/ test/ *.{js,md} examples/*.html",
+    "lint": "eslint -c .eslintrc.json --fix src && prettier --tab-width 2 --single-quote true --print-width 100 --use-tabs false --trailing-comma es5 --write src/ test/ *.{js,ts,md} examples/*.html",
+    "lint:ci": "eslint -c .eslintrc.json --max-warnings 0 src && prettier --check --tab-width 2 --single-quote true --print-width 100 --use-tabs false --trailing-comma es5 src/ test/ *.{js,ts,md} examples/*.html",
     "start": "npm run webpack",
     "start:examples:web": "webpack serve --port 8080 --open --no-client-overlay-warnings --no-client-overlay-errors",
     "test": "npm run test:node && npm run test:browser",
@@ -67,5 +70,14 @@
   },
   "overrides": {
     "yargs": "^17.7.2"
-  }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "build/dcmtk-wasm.min.js",
+    "build/dcmtk-wasm.wasm",
+    "build/index.html",
+    "index.d.ts"
+  ]
 }

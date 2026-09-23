@@ -493,7 +493,9 @@ definitions=(
   "-DDCMTK_ENABLE_BUILTIN_OFICONV_DATA"
 )
 
-mkdir -p ./bin
+# All paths are anchored to WASM_HOME_DIR so the script can be run from any
+# working directory (e.g. `bash wasm/build.sh` from the repo root).
+mkdir -p "$WASM_HOME_DIR/bin"
 OBJ_DIR="$WASM_HOME_DIR/obj"
 mkdir -p "$OBJ_DIR"
 
@@ -503,21 +505,60 @@ common_flags=(
   # abort ("unreachable" trap) instead of unwinding to the JS caller. Native
   # Wasm exception handling is used since it needs no extra JS runtime glue
   # (unlike the legacy JS-based model, which requires the __cxa_* ABI).
-  "-fwasm-exceptions"   # Link-time optimization enables cross-TU inlining and typically reduces both
-   # binary size and runtime. Must be present at both compile and link time.
-   "-flto")
-obj_files=()
+  "-fwasm-exceptions"
+  # Link-time optimization enables cross-TU inlining and typically reduces both
+  # binary size and runtime. Must be present at both compile and link time.
+  "-flto"
+  # Emit a Makefile-style dependency (.d) file per object listing every header
+  # it includes; -MP adds phony targets so deleted headers still appear in it.
+  # is_stale() reads these files so header edits recompile their dependents.
+  "-MMD" "-MP")
 
-# Compiling every source individually (rather than one combined emcc invocation)
-# ensures C sources are actually compiled as C: emcc applies -x/-std flags to all
-# inputs of an invocation regardless of their position, so C and C++ sources must
-# be compiled with separate invocations to get correct language semantics.
+# Number of parallel compile jobs (nproc on Linux, sysctl on macOS).
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+# Deterministic object-file naming derived from the source path; shared by the
+# compile step and the link step so the object list can be precomputed.
+build_objname() {
+  echo "$OBJ_DIR/$(echo "$1" | sed 's#[/.]#_#g').o"
+}
+
+# Returns success (0) if the object must be rebuilt: it is missing, its
+# dependency file is missing or lists a header that no longer exists or is
+# newer than the object, or the source itself is newer. Without the .d check,
+# editing a header (Buffer.h, DcmtkContext.h, djcodecd.h, osconfig.h, ...)
+# would silently reuse stale objects.
+is_stale() {
+  local src="$1" objname="$2" depfile="$3"
+  [ -f "$objname" ] || return 0
+  [ -f "$depfile" ] || return 0
+  [ "$src" -nt "$objname" ] && return 0
+  local dep
+  # Extract the prerequisites of the first rule (the object), joining
+  # backslash-continuation lines and stopping at the first other rule
+  # (the -MP phony header targets).
+  for dep in $(awk '
+    /^[^ \t]/ { if (seen) exit; sub(/^[^:]*:/, ""); seen = 1; gsub(/\\/, " "); print; next }
+    seen { gsub(/\\/, " "); print }
+  ' "$depfile"); do
+    [ -e "$dep" ] || return 0
+    [ "$dep" -nt "$objname" ] && return 0
+  done
+  return 1
+}
+
+# Compiles one source file unless its object is up to date. Compiling every
+# source individually (rather than one combined emcc invocation) ensures C
+# sources are actually compiled as C: emcc applies -x/-std flags to all inputs
+# of an invocation regardless of their position, so C and C++ sources must be
+# compiled with separate invocations to get correct language semantics.
 compile_file() {
   local src="$1"
   shift
-  local objname
-  objname="$OBJ_DIR/$(echo "$src" | sed 's#[/.]#_#g').o"
-  if [ ! -f "$objname" ] || [ "$src" -nt "$objname" ]; then
+  local objname depfile
+  objname="$(build_objname "$src")"
+  depfile="${objname%.o}.d"
+  if is_stale "$src" "$objname" "$depfile"; then
     local extra_defs=()
     # oflog's internal headers refuse to compile outside of its own library sources
     case "$src" in
@@ -528,25 +569,34 @@ compile_file() {
   else
     echo "CACHED  $src"
   fi
-  obj_files+=("$objname")
 }
 
-echo "Compiling ${#c_files[@]} C sources..."
-for f in "${c_files[@]}"; do
-  compile_file "$f" -std=gnu11
+# Parallel worker mode: the main invocation below feeds source paths through
+# xargs, which re-invokes this script once per file with -P jobs in flight.
+if [ "${1:-}" = "--compile-one" ]; then
+  compile_file "$2" "$3"
+  exit 0
+fi
+
+obj_files=()
+for f in "${c_files[@]}" "${cpp_files[@]}"; do
+  obj_files+=("$(build_objname "$f")")
 done
 
-echo "Compiling ${#cpp_files[@]} C++ sources..."
-for f in "${cpp_files[@]}"; do
-  compile_file "$f" -std=c++14
-done
+echo "Compiling ${#c_files[@]} C sources with $JOBS jobs..."
+printf '%s\n' "${c_files[@]}" |
+  xargs -P "$JOBS" -I SRC bash "${BASH_SOURCE[0]}" --compile-one SRC -std=gnu11
+
+echo "Compiling ${#cpp_files[@]} C++ sources with $JOBS jobs..."
+printf '%s\n' "${cpp_files[@]}" |
+  xargs -P "$JOBS" -I SRC bash "${BASH_SOURCE[0]}" --compile-one SRC -std=c++14
 
 echo "Linking..."
 emcc --no-entry "${obj_files[@]}" \
   -s EXPORTED_FUNCTIONS=[] \
-  -s TOTAL_MEMORY=32MB \
+  -s INITIAL_MEMORY=32MB \
   -s ALLOW_MEMORY_GROWTH=1 \
   -s FILESYSTEM=0 \
   -fwasm-exceptions \
   -flto \
-  -o ./bin/dcmtk-wasm.wasm
+  -o "$WASM_HOME_DIR/bin/dcmtk-wasm.wasm"

@@ -18,6 +18,10 @@ class Dcmtk {
     DcmtkModule._throwIfDcmtkModuleIsNotInitialized();
     this._released = false;
     this._parsed = false;
+    // The module generation this instance's native context belongs to; used to
+    // detect a module re-initialization, which would leave _ctx dangling in a
+    // detached heap (see DcmtkModule._throwIfGenerationIsStale).
+    this._generation = DcmtkModule.generation;
     this._ctx = DcmtkModule.wasmApi.wasmCreateDcmtkContext();
   }
 
@@ -30,6 +34,7 @@ class Dcmtk {
    */
   parseDataset(data) {
     this._throwIfReleased();
+    this._throwIfStale();
 
     const bytes = this._toUint8Array(data);
     DcmtkModule.wasmApi.wasmSetEncodedBufferSize(this._ctx, bytes.length);
@@ -99,13 +104,29 @@ class Dcmtk {
       return;
     }
 
-    DcmtkModule.wasmApi.wasmReleaseDcmtkContext(this._ctx);
+    // If the module was re-initialized, this._ctx points into the previous
+    // (detached) heap, so the native context cannot be released and is simply
+    // dropped. The instance is still marked released either way.
+    if (DcmtkModule.isInitialized() && DcmtkModule.generation === this._generation) {
+      DcmtkModule.wasmApi.wasmReleaseDcmtkContext(this._ctx);
+    }
     this._ctx = undefined;
     this._parsed = false;
     this._released = true;
   }
 
   //#region Private Methods
+  /**
+   * Throws if the shared module has been re-initialized since this instance was
+   * created, which would make this._ctx a dangling pointer into a detached heap.
+   * @method
+   * @private
+   * @throws Error if this instance is stale.
+   */
+  _throwIfStale() {
+    DcmtkModule._throwIfGenerationIsStale(this._generation);
+  }
+
   /**
    * Populates a FrameContext with the given frame index, invokes the given
    * wasm frame extraction function, and reads the resulting frame attributes
@@ -191,6 +212,7 @@ class Dcmtk {
    */
   _throwIfNotParsed() {
     this._throwIfReleased();
+    this._throwIfStale();
     if (!this._parsed) {
       throw new Error('No dataset has been parsed. Call parseDataset() first');
     }

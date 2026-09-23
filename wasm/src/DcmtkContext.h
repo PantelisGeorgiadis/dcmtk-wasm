@@ -84,12 +84,6 @@ GetMetadataContextMetadataBufferSize(MetadataContext const *ctx);
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-EMSCRIPTEN_KEEPALIVE void SetMetadataContextMetadataBuffer(MetadataContext *ctx,
-                                                           uint8_t const *data,
-                                                           size_t const size);
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 EMSCRIPTEN_KEEPALIVE void SetMetadataContextMetadataBufferSize(
     MetadataContext *ctx, size_t const size);
 
@@ -197,12 +191,6 @@ EMSCRIPTEN_KEEPALIVE uint8_t *GetFrameContextPixelDataBuffer(
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 EMSCRIPTEN_KEEPALIVE size_t
 GetFrameContextPixelDataBufferSize(FrameContext const *ctx);
-
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-EMSCRIPTEN_KEEPALIVE void SetFrameContextPixelDataBuffer(FrameContext *ctx,
-                                                         uint8_t const *data,
-                                                         size_t const size);
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

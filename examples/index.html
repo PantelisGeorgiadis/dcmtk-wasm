@@ -278,7 +278,7 @@
           </button>
         </div>
 
-        <div class="metadata-panel" :class="{ open: showMetadata }">
+        <div class="metadata-panel" ref="metadataPanelRef" :class="{ open: showMetadata }">
           <pre>{{ metadataText }}</pre>
         </div>
       </div>
@@ -291,7 +291,7 @@
     ></script>
     <script type="text/javascript" src="dcmtk-wasm.min.js"></script>
     <script>
-      const { createApp, ref, onMounted } = Vue;
+      const { createApp, ref, onMounted, nextTick } = Vue;
       const { Dcmtk, DcmtkModule } = window.dcmtkWasm;
 
       function isWebGLAvailable() {
@@ -300,9 +300,28 @@
         return gl instanceof WebGLRenderingContext;
       }
 
+      // Recursively sorts the keys of the metadata JSON so the attributes are
+      // listed in ascending DICOM tag order (array items keep their order).
+      function sortMetadata(value) {
+        if (Array.isArray(value)) {
+          return value.map(sortMetadata);
+        }
+        if (value && typeof value === 'object') {
+          const sorted = {};
+          Object.keys(value)
+            .sort()
+            .forEach((key) => {
+              sorted[key] = sortMetadata(value[key]);
+            });
+          return sorted;
+        }
+        return value;
+      }
+
       createApp({
         setup() {
           const canvasRef = ref(null);
+          const metadataPanelRef = ref(null);
           const isDragging = ref(false);
           const isRendering = ref(false);
           const hasError = ref(false);
@@ -433,7 +452,13 @@
 
             const metadata = dcmtk.getMetadata();
             hasMetadata.value = true;
-            metadataText.value = JSON.stringify(metadata, null, 2);
+            metadataText.value = JSON.stringify(sortMetadata(metadata), null, 2);
+            // Start the metadata list at the top for every new file.
+            nextTick(() => {
+              if (metadataPanelRef.value) {
+                metadataPanelRef.value.scrollTop = 0;
+              }
+            });
 
             const numberOfFrames = metadata['00280008'];
             totalFrames = numberOfFrames && numberOfFrames.Value ? numberOfFrames.Value[0] : 1;
@@ -499,6 +524,14 @@
 
           function toggleMetadata() {
             showMetadata.value = !showMetadata.value;
+            if (showMetadata.value) {
+              // Re-opening the panel starts the list at the top.
+              nextTick(() => {
+                if (metadataPanelRef.value) {
+                  metadataPanelRef.value.scrollTop = 0;
+                }
+              });
+            }
           }
 
           onMounted(async () => {
@@ -518,6 +551,7 @@
 
           return {
             canvasRef,
+            metadataPanelRef,
             isDragging,
             isRendering,
             hasError,

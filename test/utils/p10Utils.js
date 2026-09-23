@@ -34,6 +34,9 @@ const NativeTransferSyntaxUids = [
  * @param {Object} [opts.extraElements] - Additional DICOM elements to include (e.g. PatientName).
  * @param {boolean} [opts.omitPixelData] - When true, the dataset is written
  * without a PixelData element. Default is false.
+ * @param {boolean} [opts.floatPixelData] - When true, pixelData is written as
+ * non-standard Float Pixel Data (7FE0,0008, VR OF) instead of the standard
+ * Pixel Data element, as used by some parametric map datasets. Default is false.
  * @returns {ArrayBuffer} DICOM Part 10 buffer.
  */
 function createDicomPart10FromPixelData(opts) {
@@ -51,6 +54,7 @@ function createDicomPart10FromPixelData(opts) {
     transferSyntaxUid = '1.2.840.10008.1.2.1',
     extraElements = {},
     omitPixelData = false,
+    floatPixelData = false,
   } = opts;
 
   const elements = {
@@ -62,13 +66,15 @@ function createDicomPart10FromPixelData(opts) {
       ImplementationClassUID: '1.2.276.0.7230010.3.0.3.6.4',
       ImplementationVersionName: 'DCMTK-WASM-TEST',
     },
-    _vrMap: {
-      PixelData: NativeTransferSyntaxUids.includes(transferSyntaxUid)
-        ? bitsAllocated > 8
-          ? 'OW'
-          : 'OB'
-        : 'OB',
-    },
+    _vrMap: floatPixelData
+      ? { FloatPixelData: 'OF' }
+      : {
+          PixelData: NativeTransferSyntaxUids.includes(transferSyntaxUid)
+            ? bitsAllocated > 8
+              ? 'OW'
+              : 'OB'
+            : 'OB',
+        },
     SOPClassUID: '1.2.840.10008.5.1.4.1.1.7',
     SOPInstanceUID: DicomMetaDictionary.uid(),
     Rows: rows,
@@ -83,7 +89,14 @@ function createDicomPart10FromPixelData(opts) {
     ...extraElements,
   };
   if (!omitPixelData) {
-    elements.PixelData = [pixelData];
+    if (floatPixelData) {
+      elements.FloatPixelData = pixelData;
+    } else {
+      // An array value is written as one fragment per entry (encapsulated
+      // pixel sequence); a single ArrayBuffer becomes a one-fragment/one-value
+      // element.
+      elements.PixelData = Array.isArray(pixelData) ? pixelData : [pixelData];
+    }
   }
   const denaturalizedMetaHeader = DicomMetaDictionary.denaturalizeDataset(elements._meta);
   const dicomDict = new DicomDict(denaturalizedMetaHeader);
@@ -192,7 +205,43 @@ function createDeflatedPart10FromPixelData(opts) {
   return result.buffer;
 }
 
+/**
+ * Encodes a single raw frame as an RLE Lossless (PackBits) segment stream,
+ * as stored in one fragment of an encapsulated Pixel Data sequence.
+ *
+ * The encoder is intentionally simple: every byte run is emitted as a literal
+ * run (control byte 0x00-0x7F, max 128 bytes per run), which is valid RLE and
+ * keeps the helper free of run-detection logic. The frame is written with a
+ * single segment (1 sample per pixel, 8 bits allocated) preceded by the 64-byte
+ * RLE frame header (segment count + 15 segment offsets). The segment length is
+ * padded to an even number of bytes per the DICOM encapsulated-data rule.
+ * @param {Uint8Array} frame - Raw 8-bit monochrome frame samples.
+ * @returns {ArrayBuffer} Encoded RLE frame (header + segment data).
+ */
+function encodeRleFrame(frame) {
+  const segment = [];
+  for (let i = 0; i < frame.length; ) {
+    const runLength = Math.min(128, frame.length - i);
+    segment.push(runLength - 1); // literal run control byte
+    for (let j = 0; j < runLength; j++) {
+      segment.push(frame[i + j]);
+    }
+    i += runLength;
+  }
+  const segmentBytes = Uint8Array.from(segment);
+  const headerSize = 64; // 1 segment count + 15 segment offsets, 4 bytes each
+  const padding = segmentBytes.length % 2;
+  const frameBuffer = new Uint8Array(headerSize + segmentBytes.length + padding);
+  const view = new DataView(frameBuffer.buffer);
+  view.setUint32(0, 1, true); // number of segments
+  view.setUint32(4, headerSize, true); // offset of the first segment
+  frameBuffer.set(segmentBytes, headerSize);
+
+  return frameBuffer.buffer;
+}
+
 module.exports = {
   createDicomPart10FromPixelData,
   createDeflatedPart10FromPixelData,
+  encodeRleFrame,
 };

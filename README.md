@@ -1,4 +1,4 @@
-[![NPM version][npm-version-image]][npm-url] [![NPM downloads][npm-downloads-image]][npm-url] [![build][build-image]][build-url] [![MIT License][license-image]][license-url]
+[![build][build-image]][build-url] [![MIT License][license-image]][license-url]
 
 # dcmtk-wasm
 
@@ -71,6 +71,7 @@ await DcmtkModule.initializeAsync();
 // Create a Dcmtk instance and parse an ArrayBuffer with the contents of the DICOM P10 byte stream.
 const dcmtk = new Dcmtk();
 try {
+  // Parse the dataset.
   dcmtk.parseDataset(arrayBuffer);
 
   // Get the dataset metadata (attributes other than pixel data) as a JSON object.
@@ -90,6 +91,7 @@ multiple frame calls without re-parsing the source buffer.
 // Create a Dcmtk instance and parse an ArrayBuffer with the contents of the DICOM P10 byte stream.
 const dcmtk = new Dcmtk();
 try {
+  // Parse the dataset.
   dcmtk.parseDataset(arrayBuffer);
 
   // Render a frame to a BMP image. pixelData contains a full BMP file.
@@ -146,8 +148,6 @@ DcmtkModule.isInitialized();
 DcmtkModule.release();
 ```
 
-The package also exports a `log` (a [loglevel][loglevel-url] instance) and a `version` string.
-
 ### Related libraries
 
 - [dcmjs-dimse][dcmjs-dimse-url] - DICOM DIMSE implementation for Node.js using dcmjs.
@@ -158,9 +158,6 @@ The package also exports a `log` (a [loglevel][loglevel-url] instance) and a `ve
 
 dcmtk-wasm is released under the MIT License.
 
-[npm-url]: https://npmjs.org/package/dcmtk-wasm
-[npm-version-image]: https://img.shields.io/npm/v/dcmtk-wasm.svg?style=flat
-[npm-downloads-image]: http://img.shields.io/npm/dm/dcmtk-wasm.svg?style=flat
 [build-url]: https://github.com/PantelisGeorgiadis/dcmtk-wasm/actions/workflows/build.yml
 [build-image]: https://github.com/PantelisGeorgiadis/dcmtk-wasm/actions/workflows/build.yml/badge.svg?branch=main
 [license-image]: https://img.shields.io/badge/license-MIT-blue.svg?style=flat
@@ -171,4 +168,3 @@ dcmtk-wasm is released under the MIT License.
 [dcmjs-codecs-url]: https://github.com/PantelisGeorgiadis/dcmjs-codecs
 [emscripten-sdk-url]: https://emscripten.org/docs/getting_started/downloads.html
 [examples-url]: examples/index.html
-[loglevel-url]: https://github.com/pimterry/loglevel

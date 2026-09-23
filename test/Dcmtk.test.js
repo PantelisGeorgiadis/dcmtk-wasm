@@ -882,6 +882,55 @@ describe('Dcmtk', () => {
     }).to.throw();
   });
 
+  it('should throw when the module is re-initialized under a live instance', async () => {
+    const width = 2;
+    const height = 2;
+    const pixels = Uint8Array.from({ length: width * height }, (_, i) => i);
+
+    const part10 = createDicomPart10FromPixelData({
+      pixelData: pixels.buffer,
+      columns: width,
+      rows: height,
+    });
+
+    const dcmtk = new Dcmtk();
+    dcmtk.parseDataset(part10);
+    const generationBefore = DcmtkModule.generation;
+
+    // Re-initializing the shared module replaces the wasm instance and heap, so
+    // the native context of the live instance above becomes a dangling pointer.
+    await DcmtkModule.initializeAsync({ logMessages: false });
+    expect(DcmtkModule.generation).to.equal(generationBefore + 1);
+
+    expect(() => {
+      dcmtk.parseDataset(part10);
+    }).to.throw(/stale/);
+    expect(() => {
+      dcmtk.getMetadata();
+    }).to.throw(/stale/);
+    expect(() => {
+      dcmtk.getUncompressedFrame(0);
+    }).to.throw(/stale/);
+    expect(() => {
+      dcmtk.getRenderedFrame(0);
+    }).to.throw(/stale/);
+
+    // Releasing a stale instance must not touch the detached heap, but must
+    // still mark the instance as released.
+    dcmtk.release();
+    dcmtk.release();
+    expect(() => {
+      dcmtk.getMetadata();
+    }).to.throw(/released/);
+
+    // The module itself remains usable after a re-initialization.
+    const fresh = new Dcmtk();
+    fresh.parseDataset(part10);
+    const metadata = fresh.getMetadata();
+    expect(metadata['00280010'].Value[0]).to.equal(height);
+    fresh.release();
+  });
+
   it('should reset the parsed state on release', () => {
     const width = 2;
     const height = 2;
